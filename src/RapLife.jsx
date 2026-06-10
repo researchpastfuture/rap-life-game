@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { createEngine } from "./audio.js";
 import { generateVerse } from "./verseEngine.js";
+import { loadBests, saveBests as persistBests, clearBests, bestRating } from "./bests.js";
 import {
-  LANES, ALL_STAGES, SEASONS, EDDIE_INDEX, PHRASE_BEATS,
+  LANES, ALL_STAGES, SEASONS, EDDIE_INDEX, PHRASE_BEATS, EDDIE_URL,
   PERFECT_WIN, GOOD_WIN, FREESTYLE_WIN,
   cream, ink, navy, red, green, gold,
   ratingFor, ratingColor,
 } from "./data.js";
+
+const EMBED = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("embed") === "1";
 
 // ============================================================
 // RAP LIFE: BELIEVE THE BEAT — v0.3
@@ -25,6 +28,8 @@ const DEFAULT_SETTINGS = {
   oneButton: false,
   noFail: false,
   adaptive: true,
+  haptics: true,
+  saveBests: false, // OFF by default — privacy floor; opt-in only
   calibrationOffset: 0,
 };
 
@@ -48,6 +53,9 @@ export default function RapLife() {
   const [laneFlash, setLaneFlash] = useState([0, 0, 0, 0]);
   const [verseStatus, setVerseStatus] = useState("idle");
   const [verseErr, setVerseErr] = useState(null);
+  const [bests, setBests] = useState({}); // opt-in personal bests, keyed by mentor
+  const [isPB, setIsPB] = useState(false);
+  const bestsRef = useRef({});
 
   // ---- refs: the audio-clock world ----
   const eng = useRef(null);
@@ -83,6 +91,19 @@ export default function RapLife() {
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { settingsRef.current = settings; }, [settings]);
+  // load saved bests on mount only if the player has opted in
+  useEffect(() => {
+    if (settingsRef.current.saveBests) { const b = loadBests(); bestsRef.current = b; setBests(b); }
+  }, []);
+
+  const toggleSaveBests = () => {
+    setSettings((s) => {
+      const on = !s.saveBests;
+      if (on) { const b = loadBests(); bestsRef.current = b; setBests(b); }
+      else { clearBests(); bestsRef.current = {}; setBests({}); }
+      return { ...s, saveBests: on };
+    });
+  };
 
   // ---------- helpers ----------
   const effBpm = () => getStage(stageIdxRef.current).bpm * tempoScaleRef.current;
@@ -98,6 +119,11 @@ export default function RapLife() {
     setLaneFlash((arr) => { const c = [...arr]; c[lane] = t; return c; });
   };
   const flashJudgment = (text, color) => setJudgment({ text, color, key: Math.random() });
+  const buzz = (pattern) => {
+    if (settingsRef.current.haptics && typeof navigator !== "undefined" && navigator.vibrate) {
+      try { navigator.vibrate(pattern); } catch (e) {}
+    }
+  };
 
   const bumpCombo = () => {
     const c = comboRef.current + 1;
@@ -236,10 +262,26 @@ export default function RapLife() {
       const totalTargets = phrasesFor(stageIdxRef.current).reduce((a, p) => a + p.targets.length, 0);
       const acc = totalTargets ? (stats.perfect + stats.good * 0.5) / totalTargets : 0;
       const rating = ratingFor(acc);
+      const accPct = Math.round(acc * 100);
       setRatings((r) => [
         ...r,
-        { mentor: stage.mentor, emoji: stage.emoji, rating, accuracy: Math.round(acc * 100), maxCombo: maxComboRef.current },
+        { mentor: stage.mentor, emoji: stage.emoji, rating, accuracy: accPct, maxCombo: maxComboRef.current },
       ]);
+
+      // opt-in personal bests (local only)
+      let pb = false;
+      if (settingsRef.current.saveBests && stageIdxRef.current !== CUSTOM) {
+        const prev = bestsRef.current[stage.mentor];
+        if (!prev || accPct > prev.accuracy) pb = true;
+        const merged = {
+          accuracy: Math.max(prev ? prev.accuracy : 0, accPct),
+          rating: bestRating(prev ? prev.rating : null, rating),
+          maxCombo: Math.max(prev ? prev.maxCombo || 0 : 0, maxComboRef.current),
+        };
+        const nb = { ...bestsRef.current, [stage.mentor]: merged };
+        bestsRef.current = nb; setBests(nb); persistBests(nb);
+      }
+      setIsPB(pb);
       setScreen("rating");
       return stats;
     });
@@ -273,16 +315,19 @@ export default function RapLife() {
           setFlow((f) => Math.min(100, f + 4));
           setStageStats((s) => ({ ...s, perfect: s.perfect + 1 }));
           flashJudgment("PERFECT", green);
+          buzz(18);
         } else {
           setScore((x) => x + Math.round(50 * mult));
           setFlow((f) => Math.min(100, f + 2));
           setStageStats((s) => ({ ...s, good: s.good + 1 }));
           flashJudgment("GOOD", gold);
+          buzz(11);
         }
         if (recCurRef.current) recCurRef.current.hits.push({ lane, t: tNow, grade });
       } else {
         breakCombo();
         flashJudgment("MISS", red);
+        buzz([8, 26, 8]);
         setFlow((f) => Math.max(0, f - 6));
         setStageStats((s) => ({ ...s, miss: s.miss + 1 }));
         if (recCurRef.current) recCurRef.current.hits.push({ lane, t: tNow, grade: "miss" });
@@ -298,6 +343,7 @@ export default function RapLife() {
           setScore((x) => x + Math.round(50 * multiplier(c)));
           setFreestyleHits((h) => h + 1);
           flashJudgment("FREESTYLE!", navy);
+          buzz(13);
           if (recCurRef.current) recCurRef.current.hits.push({ lane, t: tNow, grade: "free" });
         }
       }
@@ -316,6 +362,7 @@ export default function RapLife() {
   }, []);
 
   useEffect(() => () => { cancelAnimationFrame(rafRef.current); eng.current.stopGroove(); }, []);
+  useEffect(() => { if (EMBED && typeof document !== "undefined") document.body.classList.add("embed"); }, []);
 
   // ---------- flow rank ----------
   const flowRank = flow >= 85 ? "BLAZING" : flow >= 60 ? "SOLID" : flow >= 35 ? "SHAKY" : "LOST";
@@ -398,19 +445,23 @@ export default function RapLife() {
     eng, contentStartRef, spbRef, targetsRef, activeLanes,
     phrasesFor, getStage, verseStatus, verseErr, genVerse, useHandcrafted,
     playCustom, record: recordRef.current, isCustom: stageIdx === CUSTOM,
+    bests, isPB, toggleSaveBests,
   };
 
-  if (screen === "title") return <TitleScreen {...ctx} />;
-  if (screen === "roster") return <RosterScreen {...ctx} />;
-  if (screen === "settings") return <SettingsScreen {...ctx} />;
-  if (screen === "calibrate") return <CalibrateScreen {...ctx} />;
-  if (screen === "creator") return <CreatorScreen {...ctx} />;
-  if (screen === "intro") return <IntroScreen {...ctx} />;
-  if (screen === "play") return <PlayScreen {...ctx} />;
-  if (screen === "rating") return <RatingScreen {...ctx} />;
-  if (screen === "finale") return <FinaleScreen {...ctx} />;
-  if (screen === "replay") return <ReplayScreen {...ctx} />;
-  return null;
+  const view =
+    screen === "title" ? <TitleScreen {...ctx} />
+    : screen === "roster" ? <RosterScreen {...ctx} />
+    : screen === "settings" ? <SettingsScreen {...ctx} />
+    : screen === "calibrate" ? <CalibrateScreen {...ctx} />
+    : screen === "creator" ? <CreatorScreen {...ctx} />
+    : screen === "intro" ? <IntroScreen {...ctx} />
+    : screen === "play" ? <PlayScreen {...ctx} />
+    : screen === "rating" ? <RatingScreen {...ctx} />
+    : screen === "finale" ? <FinaleScreen {...ctx} />
+    : screen === "replay" ? <ReplayScreen {...ctx} />
+    : null;
+
+  return (<>{view}<EmbedBar /></>);
 }
 
 // ---------------------------------------------------------------------
@@ -425,6 +476,19 @@ const Card = ({ children, style }) => (
 const Btn = ({ onClick, children, bg = red, color = cream, style, disabled }) => (
   <button onClick={onClick} disabled={disabled} className="marker" style={{ padding: "14px 24px", borderRadius: 12, fontSize: 16, background: disabled ? "#C9C2AF" : bg, color, border: `3px solid ${ink}`, boxShadow: `0 5px 0 ${ink}`, ...style }}>{children}</button>
 );
+const CatalogLink = ({ style }) => (
+  <a href={EDDIE_URL} target="_blank" rel="noopener noreferrer" className="marker"
+    style={{ display: "inline-block", fontSize: 12, color: red, textDecoration: "none", borderBottom: `2px solid ${red}`, paddingBottom: 1, ...style }}>
+    More from Eddie Rap Life ↗
+  </a>
+);
+// Floating link-back shown when the game is embedded on eddieraplife.com.
+const EmbedBar = () => (!EMBED ? null : (
+  <a href={EDDIE_URL} target="_blank" rel="noopener noreferrer" className="marker"
+    style={{ position: "fixed", top: 8, right: 8, zIndex: 50, fontSize: 11, background: cream, color: navy, border: `2px solid ${ink}`, borderRadius: 8, padding: "4px 8px", textDecoration: "none", boxShadow: `0 2px 0 ${ink}` }}>
+    🎵 eddieraplife.com ↗
+  </a>
+));
 
 // ---------------------------------------------------------------------
 function TitleScreen({ startRun, setScreen }) {
@@ -452,7 +516,8 @@ function TitleScreen({ startRun, setScreen }) {
           <Btn onClick={() => setScreen("roster")} bg={green}>🎚 Choose a mentor</Btn>
           <Btn onClick={() => setScreen("settings")} bg={cream} color={navy}>⚙ Settings</Btn>
         </div>
-        <div style={{ marginTop: 18, fontSize: 11, color: "#6B6456" }}>
+        <div style={{ marginTop: 16 }}><CatalogLink /></div>
+        <div style={{ marginTop: 14, fontSize: 11, color: "#6B6456" }}>
           All sound is made on your device. Nothing you do here is tracked or stored.
         </div>
       </Card>
@@ -461,18 +526,23 @@ function TitleScreen({ startRun, setScreen }) {
 }
 
 // ---------------------------------------------------------------------
-function RosterScreen({ startRun, setScreen }) {
-  const Card2 = ({ stage, idx, onClick }) => (
-    <button onClick={onClick} className="sticker" style={{ textAlign: "left", padding: 14, background: cream, display: "flex", gap: 12, alignItems: "center", cursor: "pointer" }}>
-      <div style={{ fontSize: 40, width: 52, textAlign: "center" }}>{stage.emoji}</div>
-      <div style={{ flex: 1 }}>
-        <div className="marker" style={{ fontSize: 16, color: navy }}>{stage.mentor}</div>
-        <div style={{ fontSize: 11, color: red, textTransform: "uppercase", letterSpacing: 1 }}>{stage.lesson} · {stage.bpm} BPM</div>
-        <div style={{ fontSize: 12, color: ink, marginTop: 2 }}>{stage.blurb}</div>
-      </div>
-      <div className="marker" style={{ fontSize: 22, color: green }}>▶</div>
-    </button>
-  );
+function RosterScreen({ startRun, setScreen, bests }) {
+  const Card2 = ({ stage, idx, onClick }) => {
+    const best = bests && bests[stage.mentor];
+    return (
+      <button onClick={onClick} className="sticker" style={{ textAlign: "left", padding: 14, background: cream, display: "flex", gap: 12, alignItems: "center", cursor: "pointer" }}>
+        <div style={{ fontSize: 40, width: 52, textAlign: "center" }}>{stage.emoji}</div>
+        <div style={{ flex: 1 }}>
+          <div className="marker" style={{ fontSize: 16, color: navy }}>{stage.mentor}
+            {best && <span className="marker" style={{ fontSize: 11, color: ratingColor(best.rating), marginLeft: 8 }}>★ {best.rating} · {best.accuracy}%</span>}
+          </div>
+          <div style={{ fontSize: 11, color: red, textTransform: "uppercase", letterSpacing: 1 }}>{stage.lesson} · {stage.bpm} BPM</div>
+          <div style={{ fontSize: 12, color: ink, marginTop: 2 }}>{stage.blurb}</div>
+        </div>
+        <div className="marker" style={{ fontSize: 22, color: green }}>▶</div>
+      </button>
+    );
+  };
   return (
     <Center bg={green}>
       <Card style={{ maxWidth: 720 }}>
@@ -510,7 +580,7 @@ function RosterScreen({ startRun, setScreen }) {
 }
 
 // ---------------------------------------------------------------------
-function SettingsScreen({ settings, setSettings, setScreen }) {
+function SettingsScreen({ settings, setSettings, setScreen, toggleSaveBests }) {
   const Toggle = ({ label, desc, on, onClick }) => (
     <button onClick={onClick} style={{ width: "100%", textAlign: "left", display: "flex", gap: 12, alignItems: "center", background: on ? "#EAF2EA" : "#FBF8F0", border: `2px solid ${on ? green : "#E5DECB"}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
       <div style={{ width: 46, height: 26, borderRadius: 13, background: on ? green : "#C9C2AF", position: "relative", flexShrink: 0 }}>
@@ -530,6 +600,8 @@ function SettingsScreen({ settings, setSettings, setScreen }) {
         <Toggle label="One-button mode" desc="Every note collapses to one lane — rhythm is the whole game. Full scoring." on={settings.oneButton} onClick={() => set("oneButton")} />
         <Toggle label="No-fail mode (Junior)" desc="LOST never ends a stage. The mentor just re-teaches." on={settings.noFail} onClick={() => set("noFail")} />
         <Toggle label="Adaptive tempo" desc="Eases 6% after two rough phrases, recovers when you lock back in." on={settings.adaptive} onClick={() => set("adaptive")} />
+        <Toggle label="Haptics" desc="Buzz on every hit (phones that support vibration). Off on desktop/iOS." on={settings.haptics} onClick={() => set("haptics")} />
+        <Toggle label="Save best scores (this device)" desc="Opt-in. Stores your best rating per mentor in this browser only — never networked. Off keeps the no-storage floor." on={settings.saveBests} onClick={toggleSaveBests} />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FBF8F0", border: "2px solid #E5DECB", borderRadius: 10, padding: 12, marginBottom: 16 }}>
           <div>
             <div className="marker" style={{ fontSize: 14, color: navy }}>Latency calibration</div>
@@ -713,6 +785,7 @@ function IntroScreen({ stageIdx, isCustom, getStage, launchPlay, verseStatus, ve
         {stage.note && (
           <div style={{ fontSize: 11, color: ink, opacity: 0.75, textAlign: "center", marginTop: 8, fontStyle: "italic" }}>{stage.note}</div>
         )}
+        {stage.guest && <div style={{ textAlign: "center", marginTop: 10 }}><CatalogLink /></div>}
 
         {canGenerate && (
           <div style={{ background: "#FBF8F0", border: "2px solid #E5DECB", borderRadius: 10, padding: 12, margin: "16px 0 0", textAlign: "center" }}>
@@ -799,7 +872,7 @@ function PlayScreen(ctx) {
           {isFree ? (freestyleHits > 0 ? `🔥 ${freestyleHits} on-beat hits` : "Hit any pad on the travelling pulse — +50 each") : `“${lyric}”`}
         </div>
 
-        <div className="sticker" style={{ position: "relative", background: cream, height: 240, overflow: "hidden", marginBottom: 14 }}>
+        <div className="sticker highway" style={{ position: "relative", background: cream, height: 240, overflow: "hidden", marginBottom: 14 }}>
           {lanes.map((l, li) => (
             <div key={li} style={{ position: "absolute", left: 0, right: 0, top: `${li * laneH}%`, height: `${laneH}%`, borderBottom: "1px solid #EFEADB", background: li % 2 ? "rgba(0,0,0,0.015)" : "transparent" }}>
               <div className="marker" style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: l.color, opacity: 0.5 }}>{l.key} · {l.name}</div>
@@ -852,7 +925,7 @@ function PlayScreen(ctx) {
 }
 
 // ---------------------------------------------------------------------
-function RatingScreen({ ratings, stageStats, freestyleHits, stageIdx, isCustom, settings, getStage, beginStage, rerunStage, setScreen, record }) {
+function RatingScreen({ ratings, stageStats, freestyleHits, stageIdx, isCustom, settings, getStage, beginStage, rerunStage, setScreen, record, isPB }) {
   const last = ratings[ratings.length - 1];
   const stage = getStage(stageIdx);
   const lost = last && last.rating === "LOST" && !settings.noFail;
@@ -871,6 +944,7 @@ function RatingScreen({ ratings, stageStats, freestyleHits, stageIdx, isCustom, 
           Accuracy {last ? last.accuracy : 0}% · {stageStats.perfect} perfect · {stageStats.good} good · {stageStats.miss} missed · {freestyleHits} freestyle
         </div>
         {last && last.maxCombo >= 4 && <div className="marker" style={{ fontSize: 13, color: gold, marginBottom: 6 }}>best combo: {last.maxCombo}×</div>}
+        {isPB && <div className="marker pop" style={{ fontSize: 15, color: green, marginBottom: 6 }}>★ New personal best!</div>}
         <p className="serif" style={{ fontSize: 14, fontStyle: "italic", color: ink, margin: "10px 0 22px" }}>
           {lost ? `“You drifted out of the now. Breathe in — the beat's coming back around.” Run it again.` : `${stage.win} — ${stage.mentor}`}
         </p>
@@ -977,7 +1051,7 @@ function ReplayScreen({ record, getStage, eng, setScreen }) {
           <button onClick={() => { cancelAnimationFrame(rafRef.current); setScreen("rating"); }} style={{ fontSize: 12, background: "transparent", color: "#9FB0CC", border: "1px solid #3A4A6A", borderRadius: 6, padding: "4px 10px" }}>exit</button>
         </div>
 
-        <div className="sticker" style={{ position: "relative", background: cream, height: 240, overflow: "hidden", marginBottom: 14 }}>
+        <div className="sticker highway" style={{ position: "relative", background: cream, height: 240, overflow: "hidden", marginBottom: 14 }}>
           {LANES.map((l, li) => (
             <div key={li} style={{ position: "absolute", left: 0, right: 0, top: `${li * laneH}%`, height: `${laneH}%`, borderBottom: "1px solid #EFEADB" }}>
               <div className="marker" style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: l.color, opacity: 0.5 }}>{l.key} · {l.name}</div>

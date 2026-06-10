@@ -81,3 +81,14 @@ button:active { transform: translateY(1px) scale(0.98); }
 .pad:active { transform: translateY(3px) scale(0.97); filter: brightness(1.2); }
 
 .scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* responsive note highway — shrink on short / phone screens */
+.highway { height: clamp(168px, 30vh, 240px) !important; }
+
+@media (max-width: 560px) {
+  .marker { letter-spacing: 0; }
+  .pad { padding-top: 18px !important; padding-bottom: 18px !important; }
+}
+
+/* embedded on eddieraplife.com: trim outer padding so it fits the iframe */
+.embed .paper { padding: 12px !important; }

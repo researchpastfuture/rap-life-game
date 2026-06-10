@@ -3,6 +3,9 @@
 // Original IP. No Sony / NanaOn-Sha / Greenblat assets.
 // ============================================================
 
+// Eddie Rap Life catalog (spec §10 cross-promo / embed link-back).
+export const EDDIE_URL = "https://eddieraplife.com";
+
 export const cream = "#F4EFE4";
 export const ink = "#33301F";
 export const navy = "#1B2A4A";

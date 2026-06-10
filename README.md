@@ -1,4 +1,7 @@
-# RAP LIFE: Believe the Beat — v0.3
+# RAP LIFE: Believe the Beat — v1.0
+
+**▶ Live: https://rap-life-game.vercel.app** · embeddable on eddieraplife.com (see
+[EMBED.md](EMBED.md))
 
 A call-and-response rhythm rap game in the PaRappa lineage, rebuilt with original IP,
 transparent timing, and a thesis: **rhythm games are mindfulness machines.** Scout the
@@ -91,9 +94,14 @@ login gate — the Aegis pattern).
   one-button + no-fail modes, latency calibration, generative verse engine.
 - **v0.3 done:** continuous `Tone.Transport` groove, Season 2 mentors, Eddie Rap Life
   guest stage (placeholder bars), replay viewer, creator mode.
-- **v1.0 next:** mobile-first polish, haptics, deploy behind the family login (the Aegis
-  gate is wired via `RAPLIFE_ACCESS_CODES`), replace Eddie's placeholder bars with the
-  real licensed track post-agreement, persisted personal bests (opt-in, local only).
+- **v1.0 done:** deployed to Vercel with GitHub auto-deploy; mobile-responsive highway +
+  haptics (`navigator.vibrate`); opt-in local personal bests (off by default — privacy
+  floor); eddieraplife.com embed mode (`?embed=1`) with catalog link-back and a
+  domain-locked frame-ancestors CSP.
+- **Still blocked on you:** replace Eddie's placeholder bars with the real licensed track
+  (needs the signed Rap Royalty Life agreement); enable live verse generation by setting
+  `RAPLIFE_ANTHROPIC_KEY` in Vercel; optionally turn on the `RAPLIFE_ACCESS_CODES` family
+  gate.
 
 ## File map
 
