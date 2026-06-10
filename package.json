@@ -1,0 +1,21 @@
+{
+  "name": "rap-life-believe-the-beat",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "RAP LIFE: Believe the Beat — a call-and-response rhythm rap game. Original IP, offline, audio-clock judgment.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tone": "^15.0.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}
