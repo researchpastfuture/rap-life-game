@@ -98,11 +98,27 @@ login gate — the Aegis pattern).
   haptics (`navigator.vibrate`); opt-in local personal bests (off by default — privacy
   floor); eddieraplife.com embed mode (`?embed=1`) with catalog link-back and a
   domain-locked frame-ancestors CSP.
-- **Voices + animation:** every mentor has a distinct **spoken voice** (Web Speech API —
-  on-device, no assets) that talks the intro, raps each line as the notes scroll, hypes
-  the freestyle, and reacts on the rating screen; talking/bobbing mentor avatars, drifting
-  note backdrops, card entrances, a wobbling logo, and rating sticker-bursts throughout.
-  Both have Settings toggles and respect `prefers-reduced-motion`.
+- **Voices + animation:** every mentor has a distinct **spoken voice** that talks the
+  intro, raps each line as the notes scroll, hypes the freestyle, and reacts on the rating
+  screen; talking/bobbing mentor avatars, drifting note backdrops, card entrances, a
+  wobbling logo, and rating sticker-bursts throughout. Both have Settings toggles and
+  respect `prefers-reduced-motion`.
+
+### Studio voices (ElevenLabs, optional)
+
+By default voices use the browser's on-device Web Speech (zero assets, offline). For
+studio-quality character voices, pre-render them with ElevenLabs:
+
+```powershell
+# 1. put ELEVENLABS_API_KEY in .env.local (git-ignored)
+npm run voices            # generates public/voices/*.mp3 + manifest.json (commit them)
+npm run voices -- --force # regenerate everything
+```
+
+The game loads `/voices/manifest.json` at startup and plays the matching clip **on the
+audio clock** (so the mentor raps on the bar), layered over the synth. Anything missing —
+generated verses, creator-mode lines, or no manifest at all — falls back to Web Speech.
+The key stays in `.env.local`; only the generated mp3s are committed.
 - **Still blocked on you:** replace Eddie's placeholder bars with the real licensed track
   (needs the signed Rap Royalty Life agreement); enable live verse generation by setting
   `RAPLIFE_ANTHROPIC_KEY` in Vercel; optionally turn on the `RAPLIFE_ACCESS_CODES` family

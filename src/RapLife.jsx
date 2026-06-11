@@ -3,6 +3,7 @@ import { createEngine } from "./audio.js";
 import { generateVerse } from "./verseEngine.js";
 import { loadBests, saveBests as persistBests, clearBests, bestRating } from "./bests.js";
 import { initVoice, say, cancelVoice, setVoiceEnabled, onSpeakingChange } from "./voice.js";
+import { initClips, hasClip, playClip, preload, voiceSlug } from "./voiceClips.js";
 import {
   LANES, ALL_STAGES, SEASONS, EDDIE_INDEX, PHRASE_BEATS, EDDIE_URL, NARRATOR_VOICE,
   PERFECT_WIN, GOOD_WIN, FREESTYLE_WIN,
@@ -172,7 +173,13 @@ export default function RapLife() {
         targets.forEach((tg) => eng.current.playLane(tg.lane, contentStart + tg.beat * spb, true));
         if (settingsRef.current.voices) {
           const line = targets.map((t) => t.word).join(" ").replace(/-\s+/g, "");
-          say(line, stage.voice, { interrupt: true });
+          // pre-rendered clips only match the handcrafted lines; generated/custom
+          // verses have different words, so those fall back to live speech.
+          const generated = !!versesRef.current[stageIdxRef.current] || stageIdxRef.current === CUSTOM;
+          const key = `${voiceSlug(stage.mentor)}.phrase${phraseIdxRef.current}`;
+          if (generated || !hasClip(key) || !playClip(key, contentStart)) {
+            say(line, stage.voice, { interrupt: true });
+          }
         }
       } else {
         setTargetStates(targets.map(() => "pending"));
@@ -190,7 +197,7 @@ export default function RapLife() {
       setFreestyleHits(0);
       maxBeat = PHRASE_BEATS;
       for (let b = 0; b < PHRASE_BEATS; b++) eng.current.gridClick(contentStart + b * spb);
-      if (settingsRef.current.voices) say("Freestyle! Make it yours — stay in the now!", stage.voice, { interrupt: true });
+      speakLine(`${voiceSlug(stage.mentor)}.free`, "Freestyle! Make it yours — stay in the now!", stage.voice);
       recCurRef.current = { kind: "freestyle", targets: [], hits: [], maxBeat: PHRASE_BEATS };
       recordRef.current.items.push(recCurRef.current);
     }
@@ -298,11 +305,10 @@ export default function RapLife() {
         bestsRef.current = nb; setBests(nb); persistBests(nb);
       }
       setIsPB(pb);
-      if (settingsRef.current.voices) {
-        const line = rating === "LOST"
-          ? "You drifted out of the now. Breathe in — the beat's coming back around."
-          : String(stage.win || "").replace(/[“”\"]/g, "");
-        say(line, stage.voice, { interrupt: true });
+      {
+        const slug = voiceSlug(stage.mentor);
+        if (rating === "LOST") speakLine(`${slug}.encourage`, "You drifted out of the now. Breathe in — the beat's coming back around.", stage.voice);
+        else speakLine(`${slug}.win`, String(stage.win || "").replace(/[“”"]/g, ""), stage.voice);
       }
       setScreen("rating");
       return stats;
@@ -388,10 +394,18 @@ export default function RapLife() {
   // voices: init + subscribe to speaking state + cleanup
   useEffect(() => {
     initVoice();
+    initClips().then((ok) => { if (ok) preload(["narrator.title", "narrator.finale"]); });
     const off = onSpeakingChange(setSpeaking);
     return () => { off(); cancelVoice(); };
   }, []);
   useEffect(() => { setVoiceEnabled(settings.voices); }, [settings.voices]);
+
+  // Speak a line: prefer the pre-rendered clip, fall back to on-device speech.
+  const speakLine = (key, text, voice) => {
+    if (!settingsRef.current.voices) return;
+    if (hasClip(key) && playClip(key)) return;
+    say(text, voice, { interrupt: true });
+  };
 
   // ---------- flow rank ----------
   const flowRank = flow >= 85 ? "BLAZING" : flow >= 60 ? "SOLID" : flow >= 35 ? "SHAKY" : "LOST";
@@ -414,6 +428,10 @@ export default function RapLife() {
     setVerseStatus(versesRef.current[idx] ? "fresh" : "idle");
     setVerseErr(null);
     eng.current.startGroove(getStage(idx).bpm, getStage(idx).bassNote);
+    if (idx !== CUSTOM) {
+      const sl = voiceSlug(getStage(idx).mentor);
+      preload([`${sl}.intro`, `${sl}.phrase0`, `${sl}.phrase1`, `${sl}.phrase2`, `${sl}.phrase3`, `${sl}.win`, `${sl}.encourage`, `${sl}.free`]);
+    }
     setScreen("intro");
   };
 
@@ -476,7 +494,7 @@ export default function RapLife() {
     eng, contentStartRef, spbRef, targetsRef, activeLanes,
     phrasesFor, getStage, verseStatus, verseErr, genVerse, useHandcrafted,
     playCustom, record: recordRef.current, isCustom: stageIdx === CUSTOM,
-    bests, isPB, toggleSaveBests, speaking,
+    bests, isPB, toggleSaveBests, speaking, speakLine,
   };
 
   const view =
@@ -560,9 +578,9 @@ const EmbedBar = () => (!EMBED ? null : (
 ));
 
 // ---------------------------------------------------------------------
-function TitleScreen({ startRun, setScreen, speaking, settings }) {
+function TitleScreen({ startRun, setScreen, speaking, settings, speakLine }) {
   useEffect(() => {
-    if (settings.voices) say("Rap Life. Believe the beat. Stay in the now!", NARRATOR_VOICE, { interrupt: true });
+    speakLine("narrator.title", "Rap Life. Believe the beat. Stay in the now!", NARRATOR_VOICE);
   }, []);
   return (
     <Center bg={navy}>
@@ -842,12 +860,12 @@ function CreatorScreen({ playCustom, setScreen, getStage }) {
 }
 
 // ---------------------------------------------------------------------
-function IntroScreen({ stageIdx, isCustom, getStage, launchPlay, verseStatus, verseErr, genVerse, useHandcrafted, speaking, settings }) {
+function IntroScreen({ stageIdx, isCustom, getStage, launchPlay, verseStatus, verseErr, genVerse, useHandcrafted, speaking, settings, speakLine }) {
   const stage = getStage(stageIdx);
   const generating = verseStatus === "generating";
   const canGenerate = !isCustom && !stage.guest && !stage.custom;
   useEffect(() => {
-    if (settings.voices) say(stage.introLines.join(" "), stage.voice, { interrupt: true });
+    speakLine(`${voiceSlug(stage.mentor)}.intro`, stage.introLines.join(" "), stage.voice);
   }, []);
   return (
     <Center bg={stage.color}>
@@ -1043,10 +1061,10 @@ function RatingScreen({ ratings, stageStats, freestyleHits, stageIdx, isCustom, 
 }
 
 // ---------------------------------------------------------------------
-function FinaleScreen({ ratings, score, restartGame, setScreen, speaking, settings }) {
+function FinaleScreen({ ratings, score, restartGame, setScreen, speaking, settings, speakLine }) {
   const totalCombo = ratings.reduce((m, r) => Math.max(m, r.maxCombo || 0), 0);
   useEffect(() => {
-    if (settings.voices) say("That's the showcase! Many lessons, one skill. Stay in the now.", NARRATOR_VOICE, { interrupt: true });
+    speakLine("narrator.finale", "That's the showcase! Many lessons, one skill. Stay in the now.", NARRATOR_VOICE);
   }, []);
   return (
     <Center bg={navy}>
