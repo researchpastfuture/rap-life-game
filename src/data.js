@@ -161,6 +161,22 @@ const EDDIE = {
   ],
 };
 
+// Per-mentor spoken-voice profiles (Web Speech API). Distinct pitch/rate so
+// each mentor sounds like a different character even on the same device.
+const VOICE_BY_MENTOR = {
+  "Old Man Switchback": { pitch: 0.8, rate: 0.92, voiceIndex: 0 },
+  "Mama Hibiscus": { pitch: 1.15, rate: 0.98, voiceIndex: 1 },
+  "DJ Cricket": { pitch: 1.8, rate: 1.3, voiceIndex: 2 },
+  "Nadia Nightowl": { pitch: 1.05, rate: 0.9, voiceIndex: 3 },
+  "Marlo the Manatee": { pitch: 0.72, rate: 0.85, voiceIndex: 4 },
+  "Postmaster Pim": { pitch: 0.88, rate: 0.8, voiceIndex: 5 },
+  "Eddie Rap Life": { pitch: 1.0, rate: 1.06, voiceIndex: 6 },
+};
+[...SEASON1, ...SEASON2, EDDIE].forEach((s) => {
+  s.voice = VOICE_BY_MENTOR[s.mentor] || { pitch: 1, rate: 1, voiceIndex: 0 };
+});
+export const NARRATOR_VOICE = { pitch: 1.0, rate: 1.0, voiceIndex: 0 };
+
 // Flat, index-addressable list the engine uses everywhere.
 export const ALL_STAGES = [...SEASON1, ...SEASON2, EDDIE];
 export const EDDIE_INDEX = ALL_STAGES.indexOf(EDDIE);

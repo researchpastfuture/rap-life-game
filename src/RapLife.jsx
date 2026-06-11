@@ -2,12 +2,21 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { createEngine } from "./audio.js";
 import { generateVerse } from "./verseEngine.js";
 import { loadBests, saveBests as persistBests, clearBests, bestRating } from "./bests.js";
+import { initVoice, say, cancelVoice, setVoiceEnabled, onSpeakingChange } from "./voice.js";
 import {
-  LANES, ALL_STAGES, SEASONS, EDDIE_INDEX, PHRASE_BEATS, EDDIE_URL,
+  LANES, ALL_STAGES, SEASONS, EDDIE_INDEX, PHRASE_BEATS, EDDIE_URL, NARRATOR_VOICE,
   PERFECT_WIN, GOOD_WIN, FREESTYLE_WIN,
   cream, ink, navy, red, green, gold,
   ratingFor, ratingColor,
 } from "./data.js";
+
+// drifting-note backdrop config (decorative, pointer-events off)
+const BACKNOTES = [
+  { e: "🎵", x: 8, d: 0, dur: 13, s: 26 }, { e: "🎶", x: 22, d: 4, dur: 16, s: 20 },
+  { e: "🎤", x: 38, d: 1.5, dur: 15, s: 22 }, { e: "🛹", x: 54, d: 6, dur: 18, s: 24 },
+  { e: "🎵", x: 69, d: 3, dur: 14, s: 18 }, { e: "🎶", x: 84, d: 7.5, dur: 17, s: 24 },
+  { e: "🔥", x: 92, d: 2, dur: 15, s: 18 }, { e: "🎶", x: 47, d: 9, dur: 19, s: 16 },
+];
 
 const EMBED = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("embed") === "1";
 
@@ -29,6 +38,7 @@ const DEFAULT_SETTINGS = {
   noFail: false,
   adaptive: true,
   haptics: true,
+  voices: true, // spoken mentor voices (Web Speech API)
   saveBests: false, // OFF by default — privacy floor; opt-in only
   calibrationOffset: 0,
 };
@@ -56,6 +66,7 @@ export default function RapLife() {
   const [bests, setBests] = useState({}); // opt-in personal bests, keyed by mentor
   const [isPB, setIsPB] = useState(false);
   const bestsRef = useRef({});
+  const [speaking, setSpeaking] = useState(false); // drives talk animation
 
   // ---- refs: the audio-clock world ----
   const eng = useRef(null);
@@ -159,6 +170,10 @@ export default function RapLife() {
       maxBeat = targets.reduce((m, t) => Math.max(m, t.beat), 0);
       if (kind === "call") {
         targets.forEach((tg) => eng.current.playLane(tg.lane, contentStart + tg.beat * spb, true));
+        if (settingsRef.current.voices) {
+          const line = targets.map((t) => t.word).join(" ").replace(/-\s+/g, "");
+          say(line, stage.voice, { interrupt: true });
+        }
       } else {
         setTargetStates(targets.map(() => "pending"));
         // open a fresh recording item for this phrase
@@ -175,6 +190,7 @@ export default function RapLife() {
       setFreestyleHits(0);
       maxBeat = PHRASE_BEATS;
       for (let b = 0; b < PHRASE_BEATS; b++) eng.current.gridClick(contentStart + b * spb);
+      if (settingsRef.current.voices) say("Freestyle! Make it yours — stay in the now!", stage.voice, { interrupt: true });
       recCurRef.current = { kind: "freestyle", targets: [], hits: [], maxBeat: PHRASE_BEATS };
       recordRef.current.items.push(recCurRef.current);
     }
@@ -282,6 +298,12 @@ export default function RapLife() {
         bestsRef.current = nb; setBests(nb); persistBests(nb);
       }
       setIsPB(pb);
+      if (settingsRef.current.voices) {
+        const line = rating === "LOST"
+          ? "You drifted out of the now. Breathe in — the beat's coming back around."
+          : String(stage.win || "").replace(/[“”\"]/g, "");
+        say(line, stage.voice, { interrupt: true });
+      }
       setScreen("rating");
       return stats;
     });
@@ -363,6 +385,13 @@ export default function RapLife() {
 
   useEffect(() => () => { cancelAnimationFrame(rafRef.current); eng.current.stopGroove(); }, []);
   useEffect(() => { if (EMBED && typeof document !== "undefined") document.body.classList.add("embed"); }, []);
+  // voices: init + subscribe to speaking state + cleanup
+  useEffect(() => {
+    initVoice();
+    const off = onSpeakingChange(setSpeaking);
+    return () => { off(); cancelVoice(); };
+  }, []);
+  useEffect(() => { setVoiceEnabled(settings.voices); }, [settings.voices]);
 
   // ---------- flow rank ----------
   const flowRank = flow >= 85 ? "BLAZING" : flow >= 60 ? "SOLID" : flow >= 35 ? "SHAKY" : "LOST";
@@ -371,6 +400,7 @@ export default function RapLife() {
   // ---------- navigation ----------
   const beginStage = async (idx) => {
     await eng.current.ensure();
+    cancelVoice();
     setStageIdx(idx); stageIdxRef.current = idx;
     setPhraseIdx(0); phraseIdxRef.current = 0;
     setFlow(70);
@@ -401,6 +431,7 @@ export default function RapLife() {
     phaseRef.current = "idle";
     setPhase("idle");
     eng.current.stopGroove();
+    cancelVoice();
     setScreen("roster");
   };
 
@@ -445,7 +476,7 @@ export default function RapLife() {
     eng, contentStartRef, spbRef, targetsRef, activeLanes,
     phrasesFor, getStage, verseStatus, verseErr, genVerse, useHandcrafted,
     playCustom, record: recordRef.current, isCustom: stageIdx === CUSTOM,
-    bests, isPB, toggleSaveBests,
+    bests, isPB, toggleSaveBests, speaking,
   };
 
   const view =
@@ -465,9 +496,47 @@ export default function RapLife() {
 }
 
 // ---------------------------------------------------------------------
+// drifting-note backdrop (decorative; never intercepts input)
+const Backdrop = () => (
+  <div aria-hidden="true" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
+    {BACKNOTES.map((n, i) => (
+      <span key={i} className="drift" style={{ left: `${n.x}%`, fontSize: n.s, animationDelay: `${n.d}s`, animationDuration: `${n.dur}s` }}>{n.e}</span>
+    ))}
+  </div>
+);
+
+// bobbing mentor avatar that "talks" (pulses + sound bars) while a voice plays
+const Talker = ({ emoji, speaking, bpm, size = 64, color = navy }) => {
+  const bobDur = bpm ? Math.max(0.7, (60 / bpm) * 2) : 2.2;
+  return (
+    <div style={{ display: "inline-block", textAlign: "center", color }}>
+      <div className={"bob" + (speaking ? " talking" : "")} style={{ fontSize: size, animationDuration: `${bobDur}s, 360ms` }}>{emoji}</div>
+      {speaking && <div className="waves"><i /><i /><i /></div>}
+    </div>
+  );
+};
+
 const Center = ({ bg, children }) => (
-  <div className="paper" style={{ minHeight: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: bg }}>
-    {children}
+  <div className="paper" style={{ minHeight: "100%", position: "relative", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: bg }}>
+    <Backdrop />
+    <div style={{ position: "relative", zIndex: 1, width: "100%", display: "flex", justifyContent: "center" }}>{children}</div>
+  </div>
+);
+
+// celebratory sticker burst on good ratings
+const BURST_EMOJI = ["⭐", "🔥", "🎵", "✨", "🎶", "💥"];
+const BURST_VECTORS = [
+  { bx: "-130px", by: "-80px", br: "-40deg" }, { bx: "130px", by: "-90px", br: "50deg" },
+  { bx: "-160px", by: "20px", br: "-20deg" }, { bx: "160px", by: "10px", br: "30deg" },
+  { bx: "-60px", by: "-140px", br: "15deg" }, { bx: "70px", by: "-130px", br: "-25deg" },
+];
+const BurstFx = () => (
+  <div aria-hidden="true" style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 2 }}>
+    {BURST_VECTORS.map((v, i) => (
+      <span key={i} className="burst" style={{ "--bx": v.bx, "--by": v.by, "--br": v.br, fontSize: 26, animationDelay: `${i * 45}ms` }}>
+        {BURST_EMOJI[i % BURST_EMOJI.length]}
+      </span>
+    ))}
   </div>
 );
 const Card = ({ children, style }) => (
@@ -491,19 +560,23 @@ const EmbedBar = () => (!EMBED ? null : (
 ));
 
 // ---------------------------------------------------------------------
-function TitleScreen({ startRun, setScreen }) {
+function TitleScreen({ startRun, setScreen, speaking, settings }) {
+  useEffect(() => {
+    if (settings.voices) say("Rap Life. Believe the beat. Stay in the now!", NARRATOR_VOICE, { interrupt: true });
+  }, []);
   return (
     <Center bg={navy}>
       <Card style={{ textAlign: "center" }}>
         <div className="marker" style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 3, color: red, marginBottom: 8 }}>
           An Eddie Rap Life × Born Between Generals joint · prototype
         </div>
-        <h1 className="marker" style={{ fontSize: 64, lineHeight: 1, margin: 0, color: navy, transform: "rotate(-2deg)" }}>RAP LIFE</h1>
-        <div className="serif" style={{ fontSize: 22, color: red, marginBottom: 18 }}>Believe the Beat</div>
+        <h1 className="marker wobble" style={{ fontSize: 64, lineHeight: 1, margin: 0, color: navy }}>RAP LIFE</h1>
+        <div className="serif" style={{ fontSize: 22, color: red, marginBottom: 10 }}>Believe the Beat</div>
+        <div style={{ marginBottom: 8 }}><Talker emoji="🦝" speaking={speaking} size={56} color={red} /></div>
         <p style={{ fontSize: 14, color: ink, margin: "0 auto 6px", maxWidth: 470 }}>
           Scout the raccoon wants to rap — but flow isn't talent, it's <b>presence</b>. Six mentors, six life lessons, one rule:
         </p>
-        <div className="serif" style={{ fontSize: 24, fontWeight: 700, color: navy, margin: "10px 0 18px" }}>“Stay in the now!”</div>
+        <div className="serif glowpulse" style={{ fontSize: 24, fontWeight: 700, color: navy, margin: "10px 0 18px" }}>“Stay in the now!”</div>
         <div style={{ background: "#FBF8F0", borderRadius: 10, padding: 14, fontSize: 13, textAlign: "left", color: ink, border: `2px solid #E5DECB`, marginBottom: 18 }}>
           <b>How to play:</b> a mentor raps a line — notes <b>slide toward the hit-line</b> on the left. When a note crosses it, hit its lane:{" "}
           <b>A · S · D · F</b> (or tap the pads). Every press is judged{" "}
@@ -512,7 +585,7 @@ function TitleScreen({ startRun, setScreen }) {
           <span style={{ color: red, fontWeight: 700 }}>MISS</span>. Chain hits for a combo multiplier. Each stage ends with a <b>freestyle bar</b>. 🔊 Sound on!
         </div>
         <div style={{ display: "flex", gap: 12, justifyContent: "center", flexWrap: "wrap" }}>
-          <Btn onClick={() => startRun(0)}>▶ Quick start</Btn>
+          <Btn onClick={() => startRun(0)} style={{ animation: "nudge 2.6s ease-in-out infinite" }}>▶ Quick start</Btn>
           <Btn onClick={() => setScreen("roster")} bg={green}>🎚 Choose a mentor</Btn>
           <Btn onClick={() => setScreen("settings")} bg={cream} color={navy}>⚙ Settings</Btn>
         </div>
@@ -600,6 +673,7 @@ function SettingsScreen({ settings, setSettings, setScreen, toggleSaveBests }) {
         <Toggle label="One-button mode" desc="Every note collapses to one lane — rhythm is the whole game. Full scoring." on={settings.oneButton} onClick={() => set("oneButton")} />
         <Toggle label="No-fail mode (Junior)" desc="LOST never ends a stage. The mentor just re-teaches." on={settings.noFail} onClick={() => set("noFail")} />
         <Toggle label="Adaptive tempo" desc="Eases 6% after two rough phrases, recovers when you lock back in." on={settings.adaptive} onClick={() => set("adaptive")} />
+        <Toggle label="Mentor voices" desc="Mentors speak the lessons and rap each line aloud (on-device speech; no assets)." on={settings.voices} onClick={() => set("voices")} />
         <Toggle label="Haptics" desc="Buzz on every hit (phones that support vibration). Off on desktop/iOS." on={settings.haptics} onClick={() => set("haptics")} />
         <Toggle label="Save best scores (this device)" desc="Opt-in. Stores your best rating per mentor in this browser only — never networked. Off keeps the no-storage floor." on={settings.saveBests} onClick={toggleSaveBests} />
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#FBF8F0", border: "2px solid #E5DECB", borderRadius: 10, padding: 12, marginBottom: 16 }}>
@@ -731,6 +805,7 @@ function CreatorScreen({ playCustom, setScreen, getStage }) {
     if (!phrases.length) { setErr("Couldn't place those words — add a few more."); return; }
     const stage = {
       mentor: "Your verse", emoji: "✍️", color: "#5A3E6B", bpm: base.bpm, bassNote: base.bassNote, season: 0, custom: true,
+      voice: base.voice || { pitch: 1, rate: 1, voiceIndex: 6 },
       lesson: `on ${base.mentor}'s beat`,
       introLines: ["You wrote it — now rap it back on the beat.", "The engine set your words on the grid. Stay in the now!"],
       win: "“You made it AND played it. That's the whole point.”",
@@ -767,14 +842,17 @@ function CreatorScreen({ playCustom, setScreen, getStage }) {
 }
 
 // ---------------------------------------------------------------------
-function IntroScreen({ stageIdx, isCustom, getStage, launchPlay, verseStatus, verseErr, genVerse, useHandcrafted }) {
+function IntroScreen({ stageIdx, isCustom, getStage, launchPlay, verseStatus, verseErr, genVerse, useHandcrafted, speaking, settings }) {
   const stage = getStage(stageIdx);
   const generating = verseStatus === "generating";
   const canGenerate = !isCustom && !stage.guest && !stage.custom;
+  useEffect(() => {
+    if (settings.voices) say(stage.introLines.join(" "), stage.voice, { interrupt: true });
+  }, []);
   return (
     <Center bg={stage.color}>
       <Card>
-        <div style={{ fontSize: 64, textAlign: "center", marginBottom: 6 }}>{stage.emoji}</div>
+        <div style={{ textAlign: "center", marginBottom: 4 }}><Talker emoji={stage.emoji} speaking={speaking} size={68} /></div>
         <h2 className="marker" style={{ fontSize: 32, textAlign: "center", margin: 0, color: navy }}>{stage.mentor}</h2>
         <div className="marker" style={{ textAlign: "center", fontSize: 12, textTransform: "uppercase", letterSpacing: 2, color: red, margin: "6px 0 16px" }}>
           {stage.guest ? "Guest set" : stage.custom ? "Your verse" : `Lesson: ${stage.lesson}`} · {stage.bpm} BPM
@@ -822,7 +900,7 @@ function PlayScreen(ctx) {
   const {
     stageIdx, phraseIdx, phase, flow, flowRank, flowColor, score, combo, multiplier,
     judgment, targetStates, freestyleHits, audioNow, settings, tempoScale, laneFlash,
-    hitLane, quitToMenu, contentStartRef, spbRef, targetsRef, activeLanes, phrasesFor, getStage,
+    hitLane, quitToMenu, contentStartRef, spbRef, targetsRef, activeLanes, phrasesFor, getStage, speaking,
   } = ctx;
 
   const stage = getStage(stageIdx);
@@ -841,11 +919,13 @@ function PlayScreen(ctx) {
   const fsBeatNow = isFree ? (audioNow - contentStartRef.current) / spb : 0;
 
   return (
-    <div className="paper" style={{ minHeight: "100%", padding: 16, background: stage.color }}>
-      <div style={{ maxWidth: 880, margin: "0 auto" }}>
+    <div className="paper" style={{ minHeight: "100%", position: "relative", overflow: "hidden", padding: 16, background: stage.color }}>
+      <Backdrop />
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 880, margin: "0 auto" }}>
         <div className="sticker" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: navy, color: cream, marginBottom: 14 }}>
-          <div className="marker" style={{ fontSize: 15 }}>
-            {stage.emoji} {stage.mentor}
+          <div className="marker" style={{ fontSize: 15, display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ display: "inline-block", fontSize: 22, lineHeight: 1 }} className={"bob" + (speaking ? " talking" : "")}>{stage.emoji}</span>
+            {stage.mentor}
             <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 8 }}>phrase {Math.min(phraseIdx + 1, phraseCount)}/{phraseCount}</span>
             <button onClick={quitToMenu} style={{ marginLeft: 12, fontSize: 11, background: "transparent", color: "#9FB0CC", border: "1px solid #3A4A6A", borderRadius: 6, padding: "2px 8px" }}>quit</button>
           </div>
@@ -925,7 +1005,7 @@ function PlayScreen(ctx) {
 }
 
 // ---------------------------------------------------------------------
-function RatingScreen({ ratings, stageStats, freestyleHits, stageIdx, isCustom, settings, getStage, beginStage, rerunStage, setScreen, record, isPB }) {
+function RatingScreen({ ratings, stageStats, freestyleHits, stageIdx, isCustom, settings, getStage, beginStage, rerunStage, setScreen, record, isPB, speaking }) {
   const last = ratings[ratings.length - 1];
   const stage = getStage(stageIdx);
   const lost = last && last.rating === "LOST" && !settings.noFail;
@@ -933,11 +1013,13 @@ function RatingScreen({ ratings, stageStats, freestyleHits, stageIdx, isCustom, 
   const nextIdx = stageIdx + 1;
   const nextStage = !oneOff && nextIdx < ALL_STAGES.length && ALL_STAGES[nextIdx] && ALL_STAGES[nextIdx].season === stage.season && !ALL_STAGES[nextIdx].guest ? nextIdx : null;
   const hasRun = record && record.items && record.items.length > 0;
+  const celebrate = last && (last.rating === "BLAZING" || last.rating === "SOLID");
 
   return (
     <Center bg={navy}>
-      <Card style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 52, marginBottom: 6 }}>{stage.emoji}</div>
+      <Card style={{ textAlign: "center", position: "relative", overflow: "hidden" }}>
+        {celebrate && <BurstFx />}
+        <div style={{ marginBottom: 6 }}><Talker emoji={stage.emoji} speaking={speaking} size={52} /></div>
         <div className="marker" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 2, color: red }}>Stage rating</div>
         <div className="marker pop" style={{ fontSize: 56, color: last ? ratingColor(last.rating) : ink, lineHeight: 1.1 }}>{last ? last.rating : ""}</div>
         <div style={{ fontSize: 13, color: ink, marginBottom: 6 }}>
@@ -961,12 +1043,16 @@ function RatingScreen({ ratings, stageStats, freestyleHits, stageIdx, isCustom, 
 }
 
 // ---------------------------------------------------------------------
-function FinaleScreen({ ratings, score, restartGame, setScreen }) {
+function FinaleScreen({ ratings, score, restartGame, setScreen, speaking, settings }) {
   const totalCombo = ratings.reduce((m, r) => Math.max(m, r.maxCombo || 0), 0);
+  useEffect(() => {
+    if (settings.voices) say("That's the showcase! Many lessons, one skill. Stay in the now.", NARRATOR_VOICE, { interrupt: true });
+  }, []);
   return (
     <Center bg={navy}>
-      <Card style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 52, marginBottom: 6 }}>🦝🎤</div>
+      <Card style={{ textAlign: "center", position: "relative", overflow: "hidden" }}>
+        <BurstFx />
+        <div style={{ marginBottom: 6 }}><Talker emoji="🦝" speaking={speaking} size={52} color={red} /></div>
         <h2 className="marker" style={{ fontSize: 30, color: navy, margin: 0 }}>Scout's showcase</h2>
         <div style={{ fontSize: 14, color: ink, margin: "6px 0 18px" }}>Total score: <b>{score}</b> · best combo <b>{totalCombo}×</b></div>
         <div style={{ display: "grid", gap: 8, marginBottom: 20 }}>
@@ -1042,8 +1128,9 @@ function ReplayScreen({ record, getStage, eng, setScreen }) {
   const noteX = (beat) => { const tt = csRef.current + beat * spb; return HIT_X + (100 - HIT_X) * ((tt - audioNow) / LEAD); };
 
   return (
-    <div className="paper" style={{ minHeight: "100%", padding: 16, background: stage.color }}>
-      <div style={{ maxWidth: 880, margin: "0 auto" }}>
+    <div className="paper" style={{ minHeight: "100%", position: "relative", overflow: "hidden", padding: 16, background: stage.color }}>
+      <Backdrop />
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 880, margin: "0 auto" }}>
         <div className="sticker" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", background: navy, color: cream, marginBottom: 14 }}>
           <div className="marker" style={{ fontSize: 15 }}>▶ Replay — {stage.emoji} {stage.mentor}
             <span style={{ fontSize: 11, opacity: 0.7, marginLeft: 8 }}>{item.kind === "freestyle" ? "freestyle bar" : `phrase ${itemIdx + 1}/${items.length}`}</span>

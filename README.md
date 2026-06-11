@@ -98,6 +98,11 @@ login gate — the Aegis pattern).
   haptics (`navigator.vibrate`); opt-in local personal bests (off by default — privacy
   floor); eddieraplife.com embed mode (`?embed=1`) with catalog link-back and a
   domain-locked frame-ancestors CSP.
+- **Voices + animation:** every mentor has a distinct **spoken voice** (Web Speech API —
+  on-device, no assets) that talks the intro, raps each line as the notes scroll, hypes
+  the freestyle, and reacts on the rating screen; talking/bobbing mentor avatars, drifting
+  note backdrops, card entrances, a wobbling logo, and rating sticker-bursts throughout.
+  Both have Settings toggles and respect `prefers-reduced-motion`.
 - **Still blocked on you:** replace Eddie's placeholder bars with the real licensed track
   (needs the signed Rap Royalty Life agreement); enable live verse generation by setting
   `RAPLIFE_ANTHROPIC_KEY` in Vercel; optionally turn on the `RAPLIFE_ACCESS_CODES` family

@@ -92,3 +92,72 @@ button:active { transform: translateY(1px) scale(0.98); }
 
 /* embedded on eddieraplife.com: trim outer padding so it fits the iframe */
 .embed .paper { padding: 12px !important; }
+
+/* ===================== app-wide animation ===================== */
+
+/* drifting note backdrop on every screen */
+@keyframes drift {
+  0%   { transform: translateY(0) rotate(0deg); opacity: 0; }
+  12%  { opacity: 0.22; }
+  88%  { opacity: 0.22; }
+  100% { transform: translateY(-105vh) rotate(40deg); opacity: 0; }
+}
+.drift {
+  position: absolute;
+  bottom: -50px;
+  animation-name: drift;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  user-select: none;
+  will-change: transform, opacity;
+}
+
+/* card entrance */
+@keyframes cardIn {
+  0%   { transform: translateY(14px) scale(0.965); opacity: 0; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+.sticker { animation: cardIn 280ms cubic-bezier(.2,.9,.3,1.2) both; }
+
+/* mentor avatar: idle bob + talking pulse */
+@keyframes bob {
+  0%, 100% { transform: translateY(0) rotate(-2deg); }
+  50%      { transform: translateY(-9px) rotate(2deg); }
+}
+.bob { display: inline-block; animation: bob 2.2s ease-in-out infinite; }
+@keyframes talkpulse {
+  0%, 100% { transform: scale(1); }
+  25%      { transform: scale(1.1); }
+  60%      { transform: scale(0.97); }
+}
+.bob.talking { animation: bob 2.2s ease-in-out infinite, talkpulse 360ms ease-in-out infinite; }
+
+/* sound-wave bars while a voice is speaking */
+@keyframes soundbar { 0%,100% { transform: scaleY(0.35);} 50% { transform: scaleY(1);} }
+.waves { display: flex; gap: 3px; justify-content: center; height: 16px; align-items: flex-end; margin-top: 4px; }
+.waves i { width: 4px; height: 16px; background: currentColor; border-radius: 2px; transform-origin: bottom; animation: soundbar 520ms ease-in-out infinite; }
+.waves i:nth-child(2) { animation-delay: 130ms; }
+.waves i:nth-child(3) { animation-delay: 260ms; }
+
+/* title wobble + tagline pulse */
+@keyframes wobble { 0%,100% { transform: rotate(-3deg); } 50% { transform: rotate(2deg) scale(1.02); } }
+.wobble { animation: wobble 3.4s ease-in-out infinite; }
+@keyframes glowpulse { 0%,100% { opacity: 0.75; transform: scale(1);} 50% { opacity: 1; transform: scale(1.05);} }
+.glowpulse { animation: glowpulse 1.6s ease-in-out infinite; }
+
+/* gentle attention nudge for the primary CTA */
+@keyframes nudge { 0%,92%,100% { transform: translateY(0);} 96% { transform: translateY(-3px);} }
+.nudge { animation: nudge 2.6s ease-in-out infinite; }
+
+/* rating sticker burst */
+@keyframes burst {
+  0%   { transform: translate(0,0) scale(0.2) rotate(0deg); opacity: 0; }
+  20%  { opacity: 1; }
+  100% { transform: translate(var(--bx), var(--by)) scale(1) rotate(var(--br)); opacity: 0; }
+}
+.burst { position: absolute; left: 50%; top: 40%; animation: burst 900ms ease-out forwards; pointer-events: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .drift, .bob, .bob.talking, .wobble, .glowpulse, .nudge, .burst, .waves i { animation: none !important; }
+  .sticker { animation: none !important; }
+}
